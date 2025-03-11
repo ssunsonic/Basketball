@@ -1,0 +1,18 @@
+[project]
+authors = ["Eric Sun <erictsun02@gmail.com>"]
+channels = ["conda-forge"]
+description = "Add a short description here"
+name = "Basketball"
+platforms = ["osx-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+ultralytics = ">=8.3.86,<9"
+numpy = ">=1.26.4,<2"
+pip = ">=25.0.1,<26"
+opencv = ">=4.11.0,<5"
+pytorch = ">=2.6.0,<3"
+torchvision = ">=0.21.0,<0.22"
+ipdb = ">=0.13.13,<0.14"
