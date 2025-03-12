@@ -7,7 +7,9 @@ the court.
 FUTURE USE: 
 - Track multiple players
 - Keep score for various formats (1v1s, 5v5s)
+- Shot angles, areas of improvement
 
+<br>
 
 ## Details
 
@@ -17,12 +19,20 @@ and made on a basketball court. The magic behind this lies in training a YOLO de
 which iterated over 9000+ images containing 5 core classes: [Ball, Made, Person, Shoot, Rim]. 
 The model's best weights were used for real-time detection. 
 
+Dataset: [Roboflow][]
+
+
+## Demo
+
+Current functionality of the software. 
+<br>
+<br>
+*Features: Single Player tracking, Shot Tracking, Shot Trajectory Mapping*
+
+![Video](assets/output.gif)
+
 
 [Roboflow]: https://universe.roboflow.com/basketball-kipnz/basketball-bs0zc-g9xgj/dataset/1
-
-### Dataset
-
-This is the dataset that was used: [Roboflow][]
 
 
 ## Installation
