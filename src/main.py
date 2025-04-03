@@ -25,8 +25,8 @@ class BasketballTracker:
         video_path: str = None,
         camera_id: int = None,
         output_dir: str = "output_vids",
-        frame_make_cooldown: int = 60,
-        frame_shoot_cooldown: int = 60,
+        frame_make_cooldown: int = 70,
+        frame_shoot_cooldown: int = 70,
         multiple: bool = False,  # Add multiple parameter
     ):
         """
@@ -43,7 +43,7 @@ class BasketballTracker:
         """
         self.model = YOLO(model_path)
         self.labels = self.model.names
-        self.tracker = Sort(max_age=90, min_hits=2, iou_threshold=0.2)
+        self.tracker = Sort(max_age=60, min_hits=1, iou_threshold=0.3)
         self.multiple = multiple  # Store multiple parameter
         
         # Initialize video capture
@@ -92,6 +92,14 @@ class BasketballTracker:
         self.rim_position = deque(maxlen=30)
         self.shot_position = deque(maxlen=30)
         self.post_shot_ball_positions = deque(maxlen=30)
+        
+        # Shot detection enhancement
+        self.shot_in_progress_since = 0      # Frame when shot started
+        self.ball_near_rim = False           # Flag for when ball is near rim
+        self.ball_below_rim_after_shot = False  # Flag for checking if ball passed through rim
+        self.ball_tracking_buffer = []       # Track ball positions after shot
+        self.max_tracking_frames = 30        # Track ball for this many frames after shot
+        self.last_shot_frame = 0             # Frame when the last shot was detected
         
         # Visualization
         self.ball_mask = None
@@ -179,6 +187,11 @@ class BasketballTracker:
                     self.shot_in_progress = True
                     self.shot_frames = 45
                     self.post_shot_ball_positions.clear()
+                    self.ball_tracking_buffer = []  # Clear the buffer for new shot
+                    self.ball_near_rim = False
+                    self.ball_below_rim_after_shot = False
+                    self.shot_in_progress_since = self.frame_counter
+                    self.last_shot_frame = self.frame_counter
                     
                     # Find closest player to shot position (shooter)
                     shooter_id = self._find_closest_player(cx, cy)
@@ -192,8 +205,9 @@ class BasketballTracker:
                         self.shot_counter += 1
                         self.current_shooter_id = shooter_id
                 
+                # Model-based detection - keep this as a fallback
                 if current_class == "made":
-                    print(f"✅ Shot made by player {self.current_shooter_id}!")
+                    print(f"✅ Shot made by player {self.current_shooter_id}! (model detection)")
                     shot_made = True
                 
                 if current_class == "rim" and conf > 0.70:
@@ -203,6 +217,32 @@ class BasketballTracker:
                 if current_class == "ball" and conf > 0.5:
                     self.ball_position.append([cx, cy, self.frame_counter])
                     self.post_shot_ball_positions.append([cx, cy, self.frame_counter])
+                    
+                    # Track ball for shot detection
+                    if self.shot_in_progress and self.frame_counter - self.shot_in_progress_since < self.max_tracking_frames:
+                        # Store ball position for trajectory analysis
+                        self.ball_tracking_buffer.append((cx, cy, self.frame_counter))
+                        
+                        # Check if we have a rim position to reference
+                        if len(self.rim_position) > 0:
+                            latest_rim = self.rim_position[-1]
+                            rim_x = (latest_rim[0] + latest_rim[1]) // 2  # Center x of rim
+                            rim_y = latest_rim[2]  # Top y of rim
+                            rim_bottom = latest_rim[3]  # Bottom y of rim
+                            
+                            # Calculate distance from ball to rim
+                            dist_to_rim = math.sqrt((cx - rim_x)**2 + (cy - rim_y)**2)
+                            
+                            # Ball is near rim (within radius of the rim)
+                            if dist_to_rim < 100:  # Adjust threshold based on your video scale
+                                self.ball_near_rim = True
+                                print(f"Ball near rim at frame {self.frame_counter}")
+                            
+                            # After ball has been near rim, check if it's below the rim
+                            # This indicates the ball went through the basket
+                            if self.ball_near_rim and cy > rim_bottom:
+                                self.ball_below_rim_after_shot = True
+                                print(f"Ball passed through rim at frame {self.frame_counter}")
                 
                 # SORT Detection for player tracking
                 if current_class == "person":
@@ -212,13 +252,32 @@ class BasketballTracker:
                     # Update player positions
                     self._update_player_positions(self.tracked_objects)
                             
-        # Handle shot made registration
-        if shot_made and self.frame_since_last_make > self.frame_make_cooldown:
+        # Check for trajectory-based made shot detection
+        trajectory_shot_made = False
+        if (self.shot_in_progress and 
+            self.ball_near_rim and 
+            self.ball_below_rim_after_shot and
+            self.frame_counter - self.shot_in_progress_since >= 10 and  # Wait enough frames for ball to complete trajectory
+            self.frame_counter - self.shot_in_progress_since < self.max_tracking_frames):  # Within tracking window
+            
+            # Trajectory analysis indicates a made shot
+            trajectory_shot_made = True
+            shot_made = True
+            print(f"🏀 Trajectory analysis detected a made shot at frame {self.frame_counter}!")
+            
+            # Reset flags after detection
+            self.ball_below_rim_after_shot = False
+            self.ball_near_rim = False
+        
+        # Handle shot made registration (from either model or trajectory detection)
+        if (shot_made or trajectory_shot_made) and self.frame_since_last_make > self.frame_make_cooldown:
             if self.current_shooter_id is not None:
                 self.player_makes[self.current_shooter_id] = self.player_makes.get(self.current_shooter_id, 0) + 1
                 print(f"🎯 Player {self.current_shooter_id} made a shot!")
             self.shots_made += 1
             self.frame_since_last_make = 0
+            # Reset shot flags after registering
+            self.shot_in_progress = False
         
         # Update ball trajectory visualization
         self._update_ball_trajectory(frame)
@@ -279,10 +338,49 @@ class BasketballTracker:
                 # Clear the overlay (reset to transparent)
                 self.ball_mask = np.zeros_like(frame, dtype=np.uint8)
                 
+                # Draw trajectory points
                 for pos in self.post_shot_ball_positions:
                     cx, cy, pos_frame = pos
                     if pos_frame % 5 == 0:
                         cv2.circle(self.ball_mask, (int(cx), int(cy)), 5, (0, 0, 255), cv2.FILLED)
+                
+                # Draw rim if available (for debugging)
+                if len(self.rim_position) > 0:
+                    latest_rim = self.rim_position[-1]
+                    rim_x1 = int(latest_rim[0])
+                    rim_x2 = int(latest_rim[1])
+                    rim_y = int(latest_rim[2])
+                    rim_bottom = int(latest_rim[3])
+                    rim_center_x = (rim_x1 + rim_x2) // 2
+                    
+                    # Draw rim rectangle
+                    cv2.rectangle(self.ball_mask, (rim_x1, rim_y), (rim_x2, rim_bottom), (0, 255, 0), 2)
+                    
+                    # Draw detection circles for rim area
+                    cv2.circle(self.ball_mask, (rim_center_x, rim_y), 50, (0, 255, 255), 1)  # Rim detection radius
+                
+                # Highlight ball near rim or passing through
+                if self.ball_near_rim:
+                    cv2.putText(
+                        self.ball_mask,
+                        "Ball near rim",
+                        (10, 180),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 0),
+                        2,
+                    )
+                
+                if self.ball_below_rim_after_shot:
+                    cv2.putText(
+                        self.ball_mask,
+                        "Shot made (trajectory)",
+                        (10, 210),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 0),
+                        2,
+                    )
             
             self.shot_frames -= 1
             if self.shot_frames == 0:
@@ -355,11 +453,15 @@ class BasketballTracker:
                     3,
                 )
         
+        # Multiple Players
+        cv2.rectangle(display_frame, (3300, 0), (4000, 250), (255, 255, 255), -1)
+
         # Draw tracked players with bounding boxes and IDs
         for obj_id, (cx, cy) in self.players.items():
             # Find corresponding tracking box
             for x1, y1, x2, y2, track_id in self.tracked_objects:
-                if int(track_id) == obj_id:
+                if int(track_id) == obj_id and int(track_id) in [1, 2]:
+                    # Calculate width and height
                     w = int(x2) - int(x1)
                     h = int(y2) - int(y1)
                     
@@ -388,23 +490,24 @@ class BasketballTracker:
                     break
         
         # Draw individual player scores in top right
-        y_offset = 50
+        y_offset = 100
         for player_id in sorted(self.unique_ids):
-            shots = self.player_shots.get(player_id, 0)
-            makes = self.player_makes.get(player_id, 0)
-            color = (255, 0, 0) if player_id == 1 else (0, 0, 255)
+            if player_id in [1, 2]:
+                shots = self.player_shots.get(player_id, 0)
+                makes = self.player_makes.get(player_id, 0)
+                color = (255, 0, 0) if player_id == 1 else (0, 0, 255)
+                
+                cv2.putText(
+                    display_frame,
+                    f"Player {player_id}: {makes}/{shots}",
+                    (self.frame_width - 500, y_offset),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    color,
+                    3,
+                )
+                y_offset += 100
             
-            cv2.putText(
-                display_frame,
-                f"Player {player_id}: {makes}/{shots}",
-                (self.frame_width - 300, y_offset),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                color,
-                3,
-            )
-            y_offset += 50
-        
         # Blend the ball trajectory mask onto the frame
         if self.ball_mask is not None:
             display_frame = cv2.addWeighted(display_frame, 1, self.ball_mask, 0.75, 0.5)
@@ -460,10 +563,11 @@ class BasketballTracker:
         print(f"Players tracked: {len(self.unique_ids)}")
         print("Player statistics:")
         for player_id in sorted(self.unique_ids):
-            shots = self.player_shots.get(player_id, 0)
-            makes = self.player_makes.get(player_id, 0)
-            pct = (makes / shots * 100) if shots > 0 else 0
-            print(f"  Player {player_id}: {makes}/{shots} ({pct:.1f}%)")
+            if player_id in [1, 2]:
+                shots = self.player_shots.get(player_id, 0)
+                makes = self.player_makes.get(player_id, 0)
+                pct = (makes / shots * 100) if shots > 0 else 0
+                print(f"  Player {player_id}: {makes}/{shots} ({pct:.1f}%)")
 
 
 def is_increasing_distances(origin: Tuple[int, int], points: List[Tuple[int, int]]) -> bool:
