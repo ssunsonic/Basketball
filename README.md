@@ -29,7 +29,7 @@ Current functionality of the software.
 <br>
 *Features: Single Player tracking, Shot Tracking, Shot Trajectory Mapping*
 
-![Video](assets/output.gif)
+![Video](assets/shootaround.gif)
 
 
 [Roboflow]: https://universe.roboflow.com/basketball-kipnz/basketball-bs0zc-g9xgj/dataset/1
