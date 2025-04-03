@@ -7,7 +7,7 @@ in frame.
 UPDATES:
 - 
 Prior versions of this software was limited to single player tracking. Now adapted to track 2 players,
-specificaly 1 on 1s. The tracking is done by utilizing the SORT package, developed by Alex Bewley. 
+specifically 1 on 1s. The tracking is done by utilizing the SORT package, developed by Alex Bewley. 
 SORT is a simple real time tracking algorithm for 2d multiple object tracking in video sequences,
 and has streamlined the process of tracking multiple players in video.
 
