@@ -1,303 +1,531 @@
-"""
-This is a script that utilizes YOLO object detection and OpenCV to detect basketball shots and makes.
-
-It uses a pretrained YOLO model to detect the classes 'person', 'shoot', 'made', 'rim', and 'ball'.
-"""
-
-# Imports
 import math
-import ipdb
+import os
+from collections import deque
+from typing import Dict, List, Tuple, Set, Optional
 
-from ultralytics import YOLO
 import cv2
 import numpy as np
-from collections import deque
-
+from ultralytics import YOLO
 from sort.sort import Sort
 
-# from src.thread import ThreadedVideoCapture
 from src.utils.distances import is_increasing_distances
-from src.utils.output import get_available_filename
-from src.utils.trajectory import draw_shot_arc
-from src.utils.court_transform import detect_court_lines, detect_three_point_line
 
-# Load the trained model
-model = YOLO("models/bball.pt")
-tracker = Sort(max_age=30, min_hits=1, iou_threshold=0.3)
-labels = model.names  # Classes in dataset
 
-# Initialize the video capture object
-# cap = cv2.VideoCapture("videos/vid1.mp4")
-# cap = cv2.VideoCapture("videos/frankie.mp4")
-# cap = ThreadedVideoCapture("videos/frankie.mp4")
-cap = cv2.VideoCapture(1)
+class BasketballTracker:
+    """
+    Basketball shot detection and tracking system.
 
-# Stuff for output video
-frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-fps = int(cap.get(cv2.CAP_PROP_FPS))
+    This class handles tracking of players, shots, and shot outcomes
+    in basketball games.
+    """
 
-# Create output video writer
-output_path = get_available_filename("output_vids", "output", "mp4")
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
-if not out.isOpened():
-    print("Error: Could not open video writer.")
+    def __init__(
+        self,
+        model_path: str = "models/bball.pt",
+        video_path: str = None,
+        camera_id: int = None,
+        output_dir: str = "output_vids",
+        frame_make_cooldown: int = 60,
+        frame_shoot_cooldown: int = 60,
+        multiple: bool = False,  # Add multiple parameter
+    ):
+        """
+        Initialize the Basketball Tracker.
 
-# Variables
-shot_counter = 0
-shots_made = 0
-show = True
-tracking = True
-tracked_objects = np.empty((0, 5))
-FRAME_MAKE_COOLDOWN = 30
-FRAME_SINCE_LAST_MAKE = 0
-
-# Positions
-ball_position = deque(maxlen=30)
-rim_position = deque(maxlen=30)
-shot_position = deque(maxlen=30)
-
-# Mask and Frames
-ball_mask = None
-img = 0
-
-# Player Tracking
-unique_ids = set()
-
-# While video not terminated
-try:
-    while cap.isOpened():
-        # ipdb.set_trace()
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # For portrait videos
-        # frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-
-        # YOLO inference
-        results = model(frame, stream=False)
-
-        # Initialize frame counter
-        FRAME_SINCE_LAST_MAKE += 1
-        print(FRAME_SINCE_LAST_MAKE)
-
-        # For counting makes/attempts
-        # shot_detected = False
-        shot_made = False
-
-        # Heatmap
-        # heatmap = np.zeros_like(frame, dtype=np.float32)
-
-        # Check if label 'shoot' is detected
-        for result in results:
-            if result.boxes.is_track:
-                tracking = False
-            else:
-                boxes = result.boxes
-                for box in boxes:
-                    # Get coordinates
-                    x1, y1, x2, y2 = box.xyxy[0]
-                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                    w, h = x2 - x1, y2 - y1  # Width and height of bounding box
-                    detections_sort = box.xyxy[0].numpy()
-
-                    # Get confidence score
-                    conf = math.ceil(box.conf[0] * 100) / 100
-                    conf_sort = box.conf.numpy()
-
-                    # Class Names
-                    cls = int(box.cls[0])
-                    current_class = labels.get(cls)
-                    cls_sort = box.cls.numpy()
-
-                    # Get centered coordinates
-                    cx, cy = x1 + w // 2, y1 + h // 2
-
-                    # Logic for class handling
-                    if current_class == "shoot" and conf > 0.8:
-                        shot_position.append(
-                            [cx, cy, img]
-                        )  # Append shot position to deque
-
-                    if current_class == "made":
-                        shot_made = True
-
-                    if current_class == "rim" and conf > 0.70:
-                        y1 += 20
-                        rim_position.append(
-                            [x1, x2, y1, y2, img]
-                        )  # Append rim position to deque
-                        # cv2.line(frame, (x1, y1), (x2, y1), (0, 0, 255), 2) # Draw line
-
-                    if current_class == "ball" and conf > 0.5:
-                        ball_position.append(
-                            [cx, cy, img]
-                        )  # Append ball position to deque
-                        #  cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1) # Draw circle
-
-                    # SORT Detection
-                    # SORT expects detections in the format: [x1, y1, x2, y2, confidence]
-                    detections_for_sort = (
-                        np.array([[*detections_sort, conf_sort[0]]])
-                        if cls_sort[0] == 2
-                        else np.empty((0, 5))
-                    )
-                    # ipdb.set_trace()
-                    tracked_objects = tracker.update(detections_for_sort)
-
-                    if show:
-                        for x1, y1, x2, y2, obj_id in tracked_objects:
-                            w = int(x2) - int(x1)
-                            cv2.rectangle(
-                                frame,
-                                (int(x1), int(y1)),
-                                (int(x2), int(y2)),
-                                (255, 0, 0),
-                                2,
-                            )
-                            cv2.putText(
-                                frame,
-                                f"Player {int(obj_id)}",
-                                (int(x1) + w // 4, int(y1) - 20),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                1,
-                                (255, 0, 0),
-                                3,
-                            )
-                            # Define the triangle vertices
-                            # points = np.array([[int(x1)+w // 3, int(y1)+10], [int(x1)+w // 4, int(y1)+10], [int(x1)+w // 4, int(y1)+10]], np.int32)
-                            # points = points.reshape((-1, 1, 2))
-                            # Draw the triangle
-                            # cv2.drawContours(frame, [points], -1, (0, 0, 255), thickness=3)
-                            # Fill the triangle
-                            # cv2.drawContours(frame, [points], -1, (0, 0, 255), thickness=cv2.FILLED)
-
-        # Draw upper left rectangle
-        cv2.rectangle(frame, (5, 0), (350, 150), (255, 255, 255), -1)  # White rectangle
-
-        # Display text
-        # cv2.putText(frame, f"{box.conf[0]:.2f}", (max(0, x1), max(0, y1-10)), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 0), 2) # Confidence score
-        # cv2.putText(frame, f"{current_class}", (max(0, x1), max(0, y1-30)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2) # Class label; 5 classes
-        cv2.putText(
-            frame,
-            f"Shot Attempted: {shot_counter}",
-            (10, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 0, 0),
-            3,
-        )  # Shots attempted counter
-        cv2.putText(
-            frame,
-            f"Shots Made: {shots_made}",
-            (10, 80),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 0, 0),
-            3,
-        )  # Shots made counter
-
-        # Checks if distance from shoot position and ball keeps increasing after shot attempt
-        # Checks if last time "shoot" was detected was five frames ago
-        if shot_position and shot_position[-1][2] == img - 5:
-            last_ball_pos = [(cx, cy) for cx, cy, img in list(ball_position)[-5:]]
-            if is_increasing_distances(
-                (shot_position[-1][0], shot_position[-1][1]), last_ball_pos
-            ):
-                shot_counter += 1
-
-        # If a make is detected, check if cooldown has passed
-        if shot_made and FRAME_SINCE_LAST_MAKE > FRAME_MAKE_COOLDOWN:
-            shots_made += 1
-            FRAME_SINCE_LAST_MAKE = 0
-
-        # Adds circles on ball position every X frames
-        if ball_mask is None:
-            ball_mask = np.zeros_like(frame, dtype=np.uint8)
-
-        # Draws a path for the balls
-        if img % 2 == 0:
-            # Clear the overlay (reset to transparent)
-            ball_mask = np.zeros_like(frame, dtype=np.uint8)
-
-            for pos in ball_position:
-                cx, cy, pos_frame = pos
-                if pos_frame % 2 == 0:
-                    cv2.circle(ball_mask, (cx, cy), 5, (0, 0, 255), cv2.FILLED)
-
-        img += 1
-
-        # Draw trajectory
-        # draw_trajectory(list(ball_position)[-10:], frame)
-
-        # Shooting PCT%
-        if shot_counter > 0:
-            shooting_pct = shots_made / shot_counter
-            cv2.putText(
-                frame,
-                f"Shooting PCT: {100 * shooting_pct:.2f}%",
-                (10, 120),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 0, 0),
-                3,
-            )
+        Args:
+            model_path: Path to the YOLO model
+            video_path: Path to the input video (None for camera)
+            camera_id: Camera ID for live tracking (None for video file)
+            output_dir: Directory to save output videos
+            frame_make_cooldown: Frames to wait between made shots
+            frame_shoot_cooldown: Frames to wait between shot attempts
+            multiple: Whether to use multiple player UI mode
+        """
+        self.model = YOLO(model_path)
+        self.labels = self.model.names
+        self.tracker = Sort(max_age=90, min_hits=2, iou_threshold=0.2)
+        self.multiple = multiple  # Store multiple parameter
+        
+        # Initialize video capture
+        if video_path:
+            self.cap = cv2.VideoCapture(video_path)
+        elif camera_id is not None:
+            self.cap = cv2.VideoCapture(camera_id)
         else:
+            raise ValueError("Either video_path or camera_id must be provided")
+        
+        # Video properties
+        self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.fps = int(self.cap.get(cv2.CAP_PROP_FPS))
+        
+        # Output settings
+        self.output_dir = output_dir
+        self.output_path = self._get_available_filename(output_dir, "output", "mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self.out = cv2.VideoWriter(
+            self.output_path, fourcc, self.fps, (self.frame_width, self.frame_height)
+        )
+        if not self.out.isOpened():
+            raise RuntimeError("Error: Could not open video writer.")
+        
+        # Tracking state
+        self.shot_counter = 0
+        self.shots_made = 0
+        self.shot_in_progress = False
+        self.tracked_objects = np.empty((0, 5))
+        self.frame_counter = 0
+        self.frame_since_last_make = 0
+        self.frame_since_last_shot = 0
+        self.frame_make_cooldown = frame_make_cooldown
+        self.frame_shoot_cooldown = frame_shoot_cooldown
+        
+        # Player tracking
+        self.players = {}  # {id: (x, y)} player positions
+        self.player_shots = {}  # {id: shots_count} shots per player
+        self.player_makes = {}  # {id: makes_count} makes per player
+        self.unique_ids = set()  # Unique player IDs
+        self.current_shooter_id = None
+        
+        # Position tracking
+        self.ball_position = deque(maxlen=30)
+        self.rim_position = deque(maxlen=30)
+        self.shot_position = deque(maxlen=30)
+        self.post_shot_ball_positions = deque(maxlen=30)
+        
+        # Visualization
+        self.ball_mask = None
+        self.shot_frames = 0
+
+    def _get_available_filename(self, directory: str, base_name: str, extension: str) -> str:
+        """
+        Generate a unique filename that doesn't exist yet.
+        
+        Args:
+            directory: Output directory path
+            base_name: Base filename 
+            extension: File extension
+            
+        Returns:
+            str: Available file path
+        """
+        os.makedirs(directory, exist_ok=True)
+        
+        counter = 0
+        while True:
+            if counter == 0:
+                filename = f"{base_name}.{extension}"
+            else:
+                filename = f"{base_name}_{counter}.{extension}"
+                
+            filepath = os.path.join(directory, filename)
+            if not os.path.exists(filepath):
+                return filepath
+            counter += 1
+
+    def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, bool, bool]:
+        """
+        Process a single frame of video.
+        
+        Args:
+            frame: Input video frame
+            
+        Returns:
+            Tuple containing:
+                - Processed frame
+                - Whether a shot was attempted
+                - Whether a shot was made
+        """
+        # Increment frame counters
+        self.frame_since_last_make += 1
+        self.frame_since_last_shot += 1
+        self.frame_counter += 1
+        
+        # Initialize flags
+        shot_made = False
+        shot_attempt = False
+        shooter_id = None
+        
+        # YOLO inference
+        results = self.model(frame, stream=False)
+        
+        # Process results
+        for result in results:
+            boxes = result.boxes
+            for box in boxes:
+                # Get coordinates
+                x1, y1, x2, y2 = box.xyxy[0]
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                w, h = x2 - x1, y2 - y1  # Width and height of bounding box
+                detections_sort = box.xyxy[0].numpy()
+                
+                # Get confidence score
+                conf = math.ceil(box.conf[0] * 100) / 100
+                conf_sort = box.conf.numpy()
+                
+                # Class info
+                cls = int(box.cls[0])
+                current_class = self.labels.get(cls)
+                cls_sort = box.cls.numpy()
+                
+                # Get centered coordinates
+                cx, cy = x1 + w // 2, y1 + h // 2
+                
+                # Handle different detected classes
+                if current_class == "shoot" and conf > 0.8:
+                    shot_position = [cx, cy, self.frame_counter]
+                    self.shot_position.append(shot_position)
+                    shot_attempt = True
+                    self.shot_in_progress = True
+                    self.shot_frames = 45
+                    self.post_shot_ball_positions.clear()
+                    
+                    # Find closest player to shot position (shooter)
+                    shooter_id = self._find_closest_player(cx, cy)
+                    
+                    # Register shot if cooldown has passed
+                    if self.frame_since_last_shot > self.frame_shoot_cooldown:
+                        if shooter_id is not None:
+                            self.player_shots[shooter_id] = self.player_shots.get(shooter_id, 0) + 1
+                            print(f"🏀 Player {shooter_id} took a shot!")
+                        self.frame_since_last_shot = 0
+                        self.shot_counter += 1
+                        self.current_shooter_id = shooter_id
+                
+                if current_class == "made":
+                    print(f"✅ Shot made by player {self.current_shooter_id}!")
+                    shot_made = True
+                
+                if current_class == "rim" and conf > 0.70:
+                    y1 += 20
+                    self.rim_position.append([x1, x2, y1, y2, self.frame_counter])
+                
+                if current_class == "ball" and conf > 0.5:
+                    self.ball_position.append([cx, cy, self.frame_counter])
+                    self.post_shot_ball_positions.append([cx, cy, self.frame_counter])
+                
+                # SORT Detection for player tracking
+                if current_class == "person":
+                    detections_for_sort = np.array([[*detections_sort, conf_sort[0]]])
+                    self.tracked_objects = self.tracker.update(detections_for_sort)
+                    
+                    # Update player positions
+                    self._update_player_positions(self.tracked_objects)
+                            
+        # Handle shot made registration
+        if shot_made and self.frame_since_last_make > self.frame_make_cooldown:
+            if self.current_shooter_id is not None:
+                self.player_makes[self.current_shooter_id] = self.player_makes.get(self.current_shooter_id, 0) + 1
+                print(f"🎯 Player {self.current_shooter_id} made a shot!")
+            self.shots_made += 1
+            self.frame_since_last_make = 0
+        
+        # Update ball trajectory visualization
+        self._update_ball_trajectory(frame)
+        
+        # Draw player information and scores - Pass the multiple parameter here
+        processed_frame = self._draw_ui_elements(frame, self.multiple)
+        
+        return processed_frame, shot_attempt, shot_made
+
+    def _find_closest_player(self, x: int, y: int) -> Optional[int]:
+        """
+        Find the closest player to a given position.
+        
+        Args:
+            x: X-coordinate
+            y: Y-coordinate
+            
+        Returns:
+            Player ID of closest player or None if no players found
+        """
+        min_distance = float("inf")
+        closest_player = None
+        
+        for player_id, (px, py) in self.players.items():
+            distance = ((px - x) ** 2 + (py - y) ** 2) ** 0.5  # Euclidean distance
+            if distance < min_distance:
+                min_distance = distance
+                closest_player = player_id
+        
+        return closest_player
+
+    def _update_player_positions(self, tracked_objects: np.ndarray) -> None:
+        """
+        Update player positions based on tracking results.
+        
+        Args:
+            tracked_objects: Array of tracked object coordinates and IDs
+        """
+        for x1, y1, x2, y2, obj_id in tracked_objects:
+            obj_id = int(obj_id)
+            w = int(x2) - int(x1)
+            cx, cy = int(x1) + w // 2, int(y1)  # Get player center position
+            self.players[obj_id] = (cx, cy)  # Store player position
+            self.unique_ids.add(obj_id)
+
+    def _update_ball_trajectory(self, frame: np.ndarray) -> None:
+        """
+        Update the ball trajectory visualization.
+        
+        Args:
+            frame: Current video frame
+        """
+        if self.ball_mask is None:
+            self.ball_mask = np.zeros_like(frame, dtype=np.uint8)
+            
+        if self.shot_in_progress:
+            if self.frame_counter % 5 == 0:
+                # Clear the overlay (reset to transparent)
+                self.ball_mask = np.zeros_like(frame, dtype=np.uint8)
+                
+                for pos in self.post_shot_ball_positions:
+                    cx, cy, pos_frame = pos
+                    if pos_frame % 5 == 0:
+                        cv2.circle(self.ball_mask, (int(cx), int(cy)), 5, (0, 0, 255), cv2.FILLED)
+            
+            self.shot_frames -= 1
+            if self.shot_frames == 0:
+                self.shot_in_progress = False
+                self.post_shot_ball_positions.clear()
+                self.ball_mask = np.zeros_like(frame, dtype=np.uint8)
+
+    def _draw_ui_elements(self, frame: np.ndarray, multiple: bool = False) -> np.ndarray:
+        """
+        Draw UI elements on the frame including player info and scores.
+        
+        Args:
+            frame: Current video frame
+            multiple: Whether to use multiple player UI mode
+            
+        Returns:
+            Frame with UI elements added
+        """
+        # Create a copy of the frame
+        display_frame = frame.copy()
+        
+        if multiple:
+            # For multiple players mode, don't draw the stats background or general shot statistics
+            # This clears the left side box and text
+            pass
+        else:
+            # Draw stats background
+            cv2.rectangle(display_frame, (5, 0), (400, 150), (255, 255, 255), -1)
+        
+            # Draw shot statistics
             cv2.putText(
-                frame,
-                f"Shooting PCT: 0%",
-                (10, 120),
+                display_frame,
+                f"Shot Attempted: {self.shot_counter}",
+                (10, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1,
                 (0, 0, 0),
                 3,
             )
+            cv2.putText(
+                display_frame,
+                f"Shots Made: {self.shots_made}",
+                (10, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 0, 0),
+                3,
+            )
+            
+            # Shooting percentage
+            if self.shot_counter > 0:
+                shooting_pct = self.shots_made / self.shot_counter
+                cv2.putText(
+                    display_frame,
+                    f"Shooting PCT: {100 * shooting_pct:.2f}%",
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 0, 0),
+                    3,
+                )
+            else:
+                cv2.putText(
+                    display_frame,
+                    "Shooting PCT: 0%",
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 0, 0),
+                    3,
+                )
+        
+        # Draw tracked players with bounding boxes and IDs
+        for obj_id, (cx, cy) in self.players.items():
+            # Find corresponding tracking box
+            for x1, y1, x2, y2, track_id in self.tracked_objects:
+                if int(track_id) == obj_id:
+                    w = int(x2) - int(x1)
+                    h = int(y2) - int(y1)
+                    
+                    # Player color - different color for each player
+                    color = (255, 0, 0) if obj_id == 1 else (0, 0, 255)
+                    
+                    # Draw player bounding box
+                    cv2.rectangle(
+                        display_frame,
+                        (int(x1), int(y1)),
+                        (int(x2), int(y2)),
+                        color,
+                        2,
+                    )
+                    
+                    # Draw player ID
+                    cv2.putText(
+                        display_frame,
+                        f"Player {obj_id}",
+                        (int(x1) + w // 4, int(y1) - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        color,
+                        3,
+                    )
+                    break
+        
+        # Draw individual player scores in top right
+        y_offset = 50
+        for player_id in sorted(self.unique_ids):
+            shots = self.player_shots.get(player_id, 0)
+            makes = self.player_makes.get(player_id, 0)
+            color = (255, 0, 0) if player_id == 1 else (0, 0, 255)
+            
+            cv2.putText(
+                display_frame,
+                f"Player {player_id}: {makes}/{shots}",
+                (self.frame_width - 300, y_offset),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                color,
+                3,
+            )
+            y_offset += 50
+        
+        # Blend the ball trajectory mask onto the frame
+        if self.ball_mask is not None:
+            display_frame = cv2.addWeighted(display_frame, 1, self.ball_mask, 0.75, 0.5)
+            
+        return display_frame
 
-        # HEATMAP
-        # Update heatmap based on ball positions
-        # for x, y, _ in ball_position:
-        #     cv2.circle(heatmap, (x, y), 15, (255,), -1)  # Larger radius for more impact
+    def run(self, rotate_video: bool = False) -> None:
+        """
+        Run the basketball tracking system on the video/camera input.
+        
+        Args:
+            rotate_video: Whether to rotate the video 90 degrees clockwise
+        """
+        try:
+            while self.cap.isOpened():
+                ret, frame = self.cap.read()
+                if not ret:
+                    break
+                
+                # For portrait videos
+                if rotate_video:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                
+                # Process the current frame
+                processed_frame, _, _ = self.process_frame(frame)
+                
+                # Display the frame
+                cv2.imshow("Basketball Shot Tracking", processed_frame)
+                
+                # Write to output video
+                self.out.write(processed_frame)
+                
+                # Exit on 'q' press
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+                    
+        except KeyboardInterrupt:
+            print("\n[INFO] Ctrl+C detected. Saving video and closing...")
+            
+        finally:
+            self.cleanup()
 
-        # Normalize and overlay heatmap
-        # heatmap = cv2.GaussianBlur(heatmap, (25, 25), 0)
-        # heatmap = cv2.normalize(heatmap, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        # heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    def cleanup(self) -> None:
+        """Release resources and print summary statistics."""
+        # Release resources
+        self.cap.release()
+        self.out.release()
+        cv2.destroyAllWindows()
+        
+        # Print summary statistics
+        print(f"Shots attempted: {self.shot_counter}")
+        print(f"Shots made: {self.shots_made}")
+        print(f"Players tracked: {len(self.unique_ids)}")
+        print("Player statistics:")
+        for player_id in sorted(self.unique_ids):
+            shots = self.player_shots.get(player_id, 0)
+            makes = self.player_makes.get(player_id, 0)
+            pct = (makes / shots * 100) if shots > 0 else 0
+            print(f"  Player {player_id}: {makes}/{shots} ({pct:.1f}%)")
 
-        # cv2.addWeighted(frame, 0.7, heatmap_color, 0.3, 0, frame)
 
-        # Draw shot arc
-        # draw_shot_arc(frame, ball_position)
+def is_increasing_distances(origin: Tuple[int, int], points: List[Tuple[int, int]]) -> bool:
+    """
+    Check if the distances from an origin point to a series of points are increasing.
+    
+    Args:
+        origin: The origin point (x, y)
+        points: List of points to check distances to
+        
+    Returns:
+        bool: True if distances are increasing, False otherwise
+    """
+    if len(points) < 2:
+        return False
+        
+    distances = []
+    for point in points:
+        dx = point[0] - origin[0]
+        dy = point[1] - origin[1]
+        dist = math.sqrt(dx**2 + dy**2)
+        distances.append(dist)
+        
+    # Check if distances are increasing
+    for i in range(1, len(distances)):
+        if distances[i] <= distances[i-1]:
+            return False
+            
+    return True
 
-        # Blend the overlay onto the main frame
-        blended_img = cv2.addWeighted(frame, 1, ball_mask, 0.75, 0.5)
-        cv2.imshow("YOLOv8 Detection", blended_img)
 
-        # ipdb.set_trace()
-        # Write to output video
-        out.write(blended_img)
+def main():
+    """Main entry point for the basketball tracking application."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Basketball Shot Tracking System")
+    parser.add_argument("--video", type=str, default="videos/eric.mp4", help="Path to video file")
+    parser.add_argument("--camera", type=int, help="Camera ID for live tracking")
+    parser.add_argument("--model", type=str, default="models/bball.pt", help="Path to YOLO model")
+    parser.add_argument("--output", type=str, default="output_vids", help="Output directory")
+    parser.add_argument("--rotate", action="store_true", help="Rotate video 90 degrees clockwise")
+    parser.add_argument("--multiple", action="store_true", help="Use multiple player UI mode")
+    args = parser.parse_args()
+    
+    # Create and run tracker
+    if args.camera is not None:
+        tracker = BasketballTracker(
+            model_path=args.model,
+            camera_id=args.camera,
+            output_dir=args.output,
+            multiple=args.multiple  # Pass the multiple parameter
+        )
+    else:
+        tracker = BasketballTracker(
+            model_path=args.model,
+            video_path=args.video,
+            output_dir=args.output,
+            multiple=args.multiple  # Pass the multiple parameter
+        )
+    
+    tracker.run(rotate_video=args.rotate)
 
-        # Count the number of unique track IDs
-        # ipdb.set_trace()
-        if tracking:
-            for obj in tracked_objects:
-                track_id = int(obj[4])
-                unique_ids.add(track_id)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-except KeyboardInterrupt:
-    print("\n[INFO] Ctrl+C detected. Saving video and closing...")
-
-finally:
-    # Release resources
-    cap.release()
-    out.release()
-    cv2.destroyAllWindows()
-
-    # Sanity
-    print(f"Shots attempted: {shot_counter}")
-    print(f"Shots made: {shots_made}")
-    print(f"Players tracked: {len(unique_ids)}")
+if __name__ == "__main__":
+    main()
