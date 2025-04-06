@@ -37,7 +37,7 @@ Current functionality of the software!
 <br>
 *Features: Single Player and 1v1 tracking, Shot Tracking, Shot Trajectory Mapping*
 
-[![Video](https://img.youtube.com/vi/SHqwIkoA018/3.jpg)](https://www.youtube.com/watch?v=SHqwIkoA018)
+[![Video](https://img.youtube.com/vi/Gk2AD_Fg174/3.jpg)](https://www.youtube.com/watch?v=Gk2AD_Fg174)
 
 [Roboflow]: https://universe.roboflow.com/basketball-kipnz/basketball-bs0zc-g9xgj/dataset/1
 
