@@ -9,6 +9,7 @@ import numpy as np
 from ultralytics import YOLO
 from sort.sort import Sort
 import ipdb
+from audioplayer import AudioPlayer
 
 from src.utils.distances import distance
 
@@ -263,12 +264,12 @@ class BasketballTracker:
                             )
 
                             # DEBUGGING
-                            if self.frame_counter == 105:
-                                    ipdb.set_trace()
+                            # if self.frame_counter == 105:
+                            #         ipdb.set_trace()
 
                             # Ball is near rim (within radius of the rim)
                             if (
-                                dist_to_rim < 200
+                                dist_to_rim < 150
                             ):  # Adjust threshold based on your video scale
                                 self.ball_near_rim = True
                                 print(f"Ball near rim at frame {self.frame_counter}")
@@ -373,6 +374,9 @@ class BasketballTracker:
                     self.player_makes.get(self.current_shooter_id, 0) + 1
                 )
                 print(f"🎯 Player {self.current_shooter_id} made a shot!")
+
+                # Lebron Lebron Lebron
+                AudioPlayer("sounds/lebron.mp3").play(block=True)
 
                 # Store shot made indicator details for displaying
                 self.shot_made_indicator = {
