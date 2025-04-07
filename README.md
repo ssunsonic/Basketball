@@ -25,8 +25,16 @@ This project uses Ultralytics, OpenCV, and SORT packages. The goal is to be able
 detect the movement of player(s) & ball(s) in a video, displaying the shots attempted
 and made on a basketball court. The magic behind this lies in training a YOLO detection model,
 which iterated over 9000+ images containing 5 core classes: [Ball, Made, Person, Shoot, Rim]. 
-The model's best weights were used for real-time detection. 
+The model's best weights were used for real-time detection. More on how this works below:
 
+### The Process
+---
+High level:
+
+Frame looping -> YOLOv8 trained model + OpenCV overlay -> Logic for handling "made" shots and
+"shot" detection -> Special logic for handling "made" detections -> SORT algorithm for multiple player tracking 
+
+<br>
 Dataset: [Roboflow][]
 
 
