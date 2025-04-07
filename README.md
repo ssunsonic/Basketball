@@ -34,9 +34,9 @@ High level:
 Frame looping -> YOLOv8 trained model + OpenCV overlay -> Logic for handling "made" shots and
 "shot" detection -> Special logic for handling "made" detections -> SORT algorithm for multiple player tracking 
 
-<br>
 Dataset: [Roboflow][]
 
+<br>
 
 ## Demo
 
