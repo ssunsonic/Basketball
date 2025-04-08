@@ -51,7 +51,7 @@ Current functionality of the software!
 
 ## Future Work
 
-- Geometric transforms to track court lines, distinguishing between 2 & 3 pointers
+- Perspective transforms to track court lines, distinguishing between 2 & 3 pointers
 - Pose estimation for determining common moves
   - Crossovers, hesis, behind the backs
 - Solving the occlusion issue
