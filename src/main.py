@@ -324,8 +324,8 @@ class BasketballTracker:
                                         # If overlap is significant (exceeds threshold), consider it a made shot
                                         if (
                                             overlap_percentage
-                                            > self.rim_overlap_threshold
-                                        ):
+                                            > self.rim_overlap_threshold and
+                                        cy < rim_y): # Ball has to be above the rim at least for a shot
                                             self.ball_below_rim_after_shot = True
                                             print(
                                                 f"Ball passed through rim at frame {self.frame_counter}"
