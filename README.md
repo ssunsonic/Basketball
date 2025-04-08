@@ -56,6 +56,7 @@ Current functionality of the software!
   - Crossovers, hesis, behind the backs
 - Solving the occlusion issue
 - App development, deploying to actual users
+  - Storing tracked data into a csv/database for accessible metrics
 
 <br>
 
