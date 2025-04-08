@@ -38,7 +38,7 @@ Dataset: [Roboflow][]
 
 <br>
 
-## Demo
+# Demo
 
 Current functionality of the software! 
 <br>
@@ -49,6 +49,15 @@ Current functionality of the software!
 
 [Roboflow]: https://universe.roboflow.com/basketball-kipnz/basketball-bs0zc-g9xgj/dataset/1
 
+## Future Work
+
+- Geometric transforms to track court lines, distinguishing between 2 & 3 pointers
+- Pose estimation for determining common moves
+  - Crossovers, hesis, behind the backs
+- Solving the occlusion issue
+- App development, deploying to actual users
+
+<br>
 
 ## Installation
 
