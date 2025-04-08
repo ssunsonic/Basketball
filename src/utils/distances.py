@@ -1,6 +1,7 @@
 import math
 import cv2
 import os
+from typing import Tuple, List
 
 def distance(p1, p2):
     """
@@ -9,15 +10,18 @@ def distance(p1, p2):
     """
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
-def is_increasing_distances(point, points_array):
+# Used previously to detect shot attempts
+def is_increasing_distances(point: Tuple[int, int], points_array: List[Tuple[int, int]]) -> bool:
     """
     Args:
-    point (tuple): (x,y)
-    points_array (list): List of tuples [(x_1, y_1), (x_2, y_2), ...].
+    point (tuple): The origin point
+    points_array (list): List of points to check distances to
 
     Returns:
     bool: True if the distances are strictly increasing, False otherwise.
     """
+    if len(points_array) < 2:
+        return False
 
     # Calculate distances between (x, y) and all points in the array
     distances = [distance(point, (x_i, y_i)) for (x_i, y_i) in points_array]
