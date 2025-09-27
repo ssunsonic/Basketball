@@ -9,7 +9,7 @@ import numpy as np
 from ultralytics import YOLO
 from sort.sort import Sort
 import ipdb
-from audioplayer import AudioPlayer
+# from audioplayer import AudioPlayer
 
 from src.utils.distances import distance
 
@@ -324,8 +324,8 @@ class BasketballTracker:
                                         # If overlap is significant (exceeds threshold), consider it a made shot
                                         if (
                                             overlap_percentage
-                                            > self.rim_overlap_threshold and
-                                        cy < rim_y): # Ball has to be above the rim at least for a shot
+                                            > self.rim_overlap_threshold
+                                        ):
                                             self.ball_below_rim_after_shot = True
                                             print(
                                                 f"Ball passed through rim at frame {self.frame_counter}"
@@ -376,7 +376,7 @@ class BasketballTracker:
                 print(f"🎯 Player {self.current_shooter_id} made a shot!")
 
                 # Lebron Lebron Lebron
-                AudioPlayer("sounds/lebron.mp3").play(block=True)
+                # AudioPlayer("sounds/lebron.mp3").play(block=True)
 
                 # Store shot made indicator details for displaying
                 self.shot_made_indicator = {
